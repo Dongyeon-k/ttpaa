@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}회칙 챗봇 | TTPAA 운영 포털{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-xl-10">
+    <div class="mb-4">
+      <h1 class="h2 fw-bold mb-2">회칙 / 규정 조회</h1>
+      <p class="text-secondary mb-0">답변은 업로드된 회칙 문서에서 확인되는 내용만 제공합니다. 근거가 없으면 “회칙에서 확인할 수 없습니다”로 답합니다.</p>
+    </div>
+    <div class="index-status-card mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between gap-3">
+        <div>
+          <div class="text-secondary fw-semibold mb-1">현재 인덱싱 상태</div>
+          {% if active_document %}
+            <h2 class="h5 fw-bold mb-2">{{ active_document.version_label }}</h2>
+            <div class="d-flex flex-wrap gap-2">
+              {% if chatbot_ready %}
+                <span class="badge text-bg-success">질문 가능</span>
+              {% elif not openai_configured %}
+                <span class="badge text-bg-danger">OpenAI 설정 필요</span>
+              {% elif active_document.index_status == "failed" %}
+                <span class="badge text-bg-danger">인덱싱 실패</span>
+              {% else %}
+                <span class="badge text-bg-warning">인덱싱 대기</span>
+              {% endif %}
+              <span class="badge text-bg-light">페이지 {{ active_document.page_count }}개</span>
+              <span class="badge text-bg-light">청크 {{ active_document.chunk_count }}개</span>
+              <span class="badge text-bg-light">추출 글자 {{ active_document.text_character_count }}자</span>
+            </div>
+          {% else %}
+            <h2 class="h5 fw-bold mb-2">활성 회칙 없음</h2>
+            <p class="text-secondary mb-0">관리자가 회칙 PDF를 업로드하면 질문할 수 있습니다.</p>
+          {% endif %}
+        </div>
+        {% if active_document %}
+          <div class="index-status-meta">
+            <div><span>파일</span>{{ active_document.upload_filename|default:"-" }}</div>
+            <div><span>업로드</span>{{ active_document.uploaded_at|date:"Y-m-d H:i" }}</div>
+            <div><span>인덱싱</span>{{ active_document.indexed_at|date:"Y-m-d H:i"|default:"-" }}</div>
+            <div><span>상태</span>{{ active_document.get_index_status_display }}</div>
+            <div><span>빈 페이지</span>{{ active_document.empty_page_count }}개</div>
+          </div>
+        {% endif %}
+      </div>
+      {% if active_document.index_error %}
+        <div class="alert alert-danger mt-3 mb-0">{{ active_document.index_error }}</div>
+      {% elif active_document and active_document.text_character_count == 0 %}
+        <div class="alert alert-danger mt-3 mb-0">PDF에서 검색 가능한 텍스트를 찾지 못했습니다. OCR로도 텍스트를 찾지 못했거나 OCR 설정을 사용할 수 없습니다.</div>
+      {% elif active_document and not openai_configured %}
+        <div class="alert alert-danger mt-3 mb-0">OpenAI API 키가 설정되지 않아 답변을 생성할 수 없습니다. 관리자에게 .env의 OPENAI_API_KEY 설정을 요청해 주세요.</div>
+      {% elif active_document and not chatbot_ready %}
+        <div class="alert alert-warning mt-3 mb-0">인덱싱이 완료되지 않았거나 검색할 청크가 없습니다. 회칙 관리에서 재인덱싱을 실행해 주세요.</div>
+      {% endif %}
+      {% if request.user.is_portal_admin %}
+        <div class="mt-3">
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'constitution-manage' %}">회칙 관리로 이동</a>
+        </div>
+      {% endif %}
+    </div>
+    <div class="card shadow-soft border-0">
+      <div class="card-body">
+        <form method="post" hx-post="{% url 'chatbot' %}" hx-target="#chat-result" hx-swap="innerHTML" class="row g-3" data-busy-form data-busy-text="답변 생성 중입니다" data-busy-target="#chat-result">
+          {% csrf_token %}
+          <div class="col-12 col-lg-10">{{ question_form.question.label_tag }}{{ question_form.question }}</div>
+          <div class="col-12 col-lg-2 d-grid align-self-end"><button class="btn btn-primary" type="submit" data-busy-submit {% if not chatbot_ready %}disabled{% endif %}>질문하기</button></div>
+        </form>
+        {% if suggested_questions %}
+          <div class="suggested-question-list mt-3">
+            <div class="small text-secondary fw-semibold mb-2">예시 질문</div>
+            <div class="d-flex flex-wrap gap-2">
+              {% for question in suggested_questions %}
+                <button class="btn btn-sm btn-outline-secondary suggested-question" type="button" data-question="{{ question }}">{{ question }}</button>
+              {% endfor %}
+            </div>
+          </div>
+        {% endif %}
+        <div id="chat-result" class="mt-4">
+          {% if result %}
+            {% include "chatbot/partials/chat_response.html" %}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

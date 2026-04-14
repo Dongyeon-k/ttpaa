@@ -1,0 +1,50 @@
+services:
+  caddy:
+    image: caddy:2.9-alpine
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./compose/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - static_data:/srv/static:ro
+      - media_data:/srv/media:ro
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  web:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      DJANGO_SETTINGS_MODULE: config.settings
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      - db
+    volumes:
+      - ./secrets:/app/secrets:ro
+      - media_data:/app/media
+      - static_data:/app/staticfiles
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  media_data:
+  static_data:
+  caddy_data:
+  caddy_config:

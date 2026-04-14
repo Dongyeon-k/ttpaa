@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}관리 설정 | TTPAA 운영 포털{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-end mb-4">
+  <div>
+    <h1 class="h2 fw-bold mb-2">관리 설정</h1>
+    <p class="text-secondary mb-0">구성원 계정과 지출 카테고리를 관리합니다.</p>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-12 col-lg-6">
+    <div class="card shadow-soft border-0">
+      <div class="card-body">
+        <h2 class="h5 mb-3">구성원 추가</h2>
+        <form method="post" class="row g-3">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="create_member">
+          {{ member_form.as_p }}
+          <div><button class="btn btn-primary">계정 생성</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card shadow-soft border-0">
+      <div class="card-body">
+        <h2 class="h5 mb-3">지출 카테고리 추가</h2>
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="create_category">
+          {{ category_form.as_p }}
+          <button class="btn btn-primary">카테고리 저장</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-7">
+    <div class="card shadow-soft border-0">
+      <div class="card-body">
+        <h2 class="h5 mb-3">구성원 목록</h2>
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead><tr><th>이름</th><th>아이디</th><th>권한</th><th>상태</th><th></th></tr></thead>
+            <tbody>
+              {% for member in members %}
+                <tr>
+                  <td>{{ member.first_name|default:"-" }}</td>
+                  <td>{{ member.username }}</td>
+                  <td>{{ member.get_role_display }}</td>
+                  <td>{% if member.is_active %}활성{% else %}비활성{% endif %}</td>
+                  <td>
+                    <form method="post" action="{% url 'toggle-member-active' member.pk %}">
+                      {% csrf_token %}
+                      <button class="btn btn-sm btn-outline-secondary">
+                        {% if member.is_active %}비활성화{% else %}재활성화{% endif %}
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-5">
+    <div class="card shadow-soft border-0">
+      <div class="card-body">
+        <h2 class="h5 mb-3">운영 메모</h2>
+        <ul class="list-group list-group-flush">
+          <li class="list-group-item px-0">활성 회칙: {{ active_constitution.version_label|default:"없음" }}</li>
+          <li class="list-group-item px-0">카테고리 수: {{ categories|length }}</li>
+          <li class="list-group-item px-0">구성원 수: {{ members|length }}</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

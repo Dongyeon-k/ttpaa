@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}지출 요청 상세 | TTPAA 운영 포털{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-end mb-4">
+  <div>
+    <h1 class="h2 fw-bold mb-2">지출 요청 #{{ expense.pk }}</h1>
+    <p class="text-secondary mb-0">{{ expense.requester.first_name|default:expense.requester.username }}님의 요청 상세입니다.</p>
+  </div>
+  <span class="badge text-bg-light fs-6">{{ expense.get_current_status_display }}</span>
+</div>
+
+<div class="row g-4">
+  <div class="col-12 col-lg-7">
+    <div class="card shadow-soft border-0 mb-4">
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-4">지출일</dt><dd class="col-sm-8">{{ expense.expense_date }}</dd>
+          <dt class="col-sm-4">카테고리</dt><dd class="col-sm-8">{{ expense.category.name }}</dd>
+          <dt class="col-sm-4">금액</dt><dd class="col-sm-8">{{ expense.amount_krw }}원</dd>
+          <dt class="col-sm-4">비고</dt><dd class="col-sm-8">{{ expense.comment|default:"-" }}</dd>
+          <dt class="col-sm-4">관리자 메모</dt><dd class="col-sm-8">{{ expense.admin_note|default:"-" }}</dd>
+          <dt class="col-sm-4">반려 사유</dt><dd class="col-sm-8">{{ expense.rejection_reason|default:"-" }}</dd>
+          <dt class="col-sm-4">지급 메모</dt><dd class="col-sm-8">{{ expense.payment_memo|default:"-" }}</dd>
+          <dt class="col-sm-4">Google Sync</dt><dd class="col-sm-8">{{ expense.get_sync_state_display }} / {{ expense.sync_error|default:"-" }}</dd>
+          <dt class="col-sm-4">Drive 링크</dt><dd class="col-sm-8">{% if expense.google_drive_file_url %}<a href="{{ expense.google_drive_file_url }}" target="_blank">열기</a>{% else %}-{% endif %}</dd>
+          <dt class="col-sm-4">Sheet 참조</dt><dd class="col-sm-8">{{ expense.google_sheet_row_ref|default:"-" }}</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="card shadow-soft border-0">
+      <div class="card-body">
+        <h2 class="h5 mb-3">첨부 이미지</h2>
+        {% with attachment=expense.primary_attachment %}
+          {% if attachment %}
+            {% if "image/heic" in attachment.mime_type or "image/heif" in attachment.mime_type %}
+              <p class="text-secondary">HEIC/HEIF 파일은 브라우저에서 바로 미리보기가 제한될 수 있습니다.</p>
+              <a class="btn btn-outline-secondary" href="{{ attachment.file.url }}" target="_blank">첨부 파일 열기</a>
+            {% else %}
+              <img src="{{ attachment.file.url }}" alt="첨부 이미지" class="img-fluid rounded border">
+            {% endif %}
+          {% else %}
+            <p class="text-secondary mb-0">첨부 파일이 없습니다.</p>
+          {% endif %}
+        {% endwith %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-5">
+    <div class="card shadow-soft border-0 mb-4">
+      <div class="card-body">
+        <h2 class="h5 mb-3">상태 변경</h2>
+        {% if expense.current_status == 'submitted' %}
+          <form method="post" action="{% url 'expense-transition' expense.pk 'under_review' %}" class="mb-3">
+            {% csrf_token %}{{ review_form.as_p }}<button class="btn btn-primary">검토중으로 변경</button>
+          </form>
+          <form method="post" action="{% url 'expense-transition' expense.pk 'rejected' %}">
+            {% csrf_token %}{{ reject_form.as_p }}<button class="btn btn-outline-danger">반려</button>
+          </form>
+        {% elif expense.current_status == 'under_review' %}
+          <form method="post" action="{% url 'expense-transition' expense.pk 'approved' %}" class="mb-3">
+            {% csrf_token %}{{ review_form.as_p }}<button class="btn btn-primary">승인</button>
+          </form>
+          <form method="post" action="{% url 'expense-transition' expense.pk 'rejected' %}">
+            {% csrf_token %}{{ reject_form.as_p }}<button class="btn btn-outline-danger">반려</button>
+          </form>
+        {% elif expense.current_status == 'approved' %}
+          <form method="post" action="{% url 'expense-transition' expense.pk 'paid' %}">
+            {% csrf_token %}{{ paid_form.as_p }}<button class="btn btn-primary">지급 완료 처리</button>
+          </form>
+        {% elif expense.can_retry_sync %}
+          <form method="post" action="{% url 'expense-retry-sync' expense.pk %}">
+            {% csrf_token %}<button class="btn btn-outline-warning">Google 동기화 재시도</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card shadow-soft border-0">
+      <div class="card-body">
+        <h2 class="h5 mb-3">감사 이력</h2>
+        <ul class="timeline-list">
+          {% for item in expense.status_history.all %}
+            <li>
+              <strong>{{ item.get_to_status_display }}</strong>
+              <div class="small text-secondary">{{ item.changed_by.first_name|default:item.changed_by.username|default:"시스템" }} / {{ item.created_at|date:"Y-m-d H:i" }}</div>
+              <div>{{ item.note|default:"-" }}</div>
+            </li>
+          {% empty %}
+            <li>이력이 없습니다.</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

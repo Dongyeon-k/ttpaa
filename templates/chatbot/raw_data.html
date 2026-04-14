@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}회칙 Raw 데이터 | TTPAA 운영 포털{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-end mb-4">
+  <div>
+    <h1 class="h2 fw-bold mb-2">회칙 Raw 데이터</h1>
+    <p class="text-secondary mb-0">{{ document.version_label }} 인덱싱 결과를 페이지와 청크 단위로 확인합니다.</p>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'constitution-manage' %}">관리로 돌아가기</a>
+    <a class="btn btn-outline-dark" href="{{ document.file.url }}" target="_blank">원본 PDF</a>
+  </div>
+</div>
+
+<div class="index-status-card mb-4">
+  <div class="row g-3">
+    <div class="col-12 col-md-3">
+      <div class="text-secondary fw-semibold">상태</div>
+      <div>{{ document.get_index_status_display }}</div>
+    </div>
+    <div class="col-12 col-md-3">
+      <div class="text-secondary fw-semibold">페이지</div>
+      <div>{{ document.pages.count }}개</div>
+    </div>
+    <div class="col-12 col-md-3">
+      <div class="text-secondary fw-semibold">청크</div>
+      <div>{{ document.chunks.count }}개</div>
+    </div>
+    <div class="col-12 col-md-3">
+      <div class="text-secondary fw-semibold">인덱싱</div>
+      <div>{{ document.indexed_at|date:"Y-m-d H:i"|default:"-" }}</div>
+    </div>
+  </div>
+  {% if document.index_error %}
+    <div class="alert alert-danger mt-3 mb-0">{{ document.index_error }}</div>
+  {% endif %}
+</div>
+
+<div class="row g-4">
+  <div class="col-12 col-xl-6">
+    <h2 class="h5 mb-3">페이지 원문</h2>
+    <div class="raw-data-list">
+      {% for page in document.pages.all %}
+        <details class="raw-data-item" {% if forloop.first %}open{% endif %}>
+          <summary>페이지 {{ page.page_number }} · {{ page.text|length }}자</summary>
+          <pre class="source-text mb-0">{{ page.text|default:"텍스트 없음" }}</pre>
+        </details>
+      {% empty %}
+        <p class="text-secondary">저장된 페이지 텍스트가 없습니다.</p>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="col-12 col-xl-6">
+    <h2 class="h5 mb-3">검색 청크</h2>
+    <div class="raw-data-list">
+      {% for chunk in document.chunks.all %}
+        <details class="raw-data-item" {% if forloop.first %}open{% endif %}>
+          <summary>페이지 {{ chunk.page_number }} · 청크 {{ chunk.chunk_index }} · {{ chunk.text|length }}자</summary>
+          {% if chunk.heading %}<div class="small text-secondary fw-semibold mb-2">{{ chunk.heading }}</div>{% endif %}
+          <pre class="source-text mb-0">{{ chunk.text }}</pre>
+        </details>
+      {% empty %}
+        <p class="text-secondary">저장된 검색 청크가 없습니다.</p>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

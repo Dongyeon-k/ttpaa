@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}출처 페이지 | TTPAA 운영 포털{% endblock %}
+{% block content %}
+<div class="card shadow-soft border-0">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h1 class="h4 fw-bold mb-0">페이지 {{ page.page_number }}</h1>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ pdf_page_url }}" target="_blank">원본 PDF 해당 페이지 열기</a>
+    </div>
+    <div class="source-page-preview mb-3">
+      <img src="{% url 'chatbot-source-page-image' page.pk %}" alt="원본 PDF {{ page.page_number }}페이지">
+    </div>
+    <h2 class="h5 mb-3">인덱싱된 텍스트</h2>
+    <pre class="source-text mb-0">{{ page.text }}</pre>
+  </div>
+</div>
+{% endblock %}

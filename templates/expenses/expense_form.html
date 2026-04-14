@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}지출 요청 등록 | TTPAA 운영 포털{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-8">
+    <div class="card shadow-soft border-0">
+      <div class="card-body p-4">
+        <h1 class="h3 fw-bold mb-3">지출 요청 등록</h1>
+        <p class="text-secondary">휴대폰 사진도 바로 업로드할 수 있습니다. HEIC 파일은 저장은 가능하지만 일부 브라우저 미리보기는 제한될 수 있습니다.</p>
+        <form method="post" enctype="multipart/form-data" class="row g-3">
+          {% csrf_token %}
+          <div class="col-12 col-md-6">{{ form.expense_date.label_tag }}{{ form.expense_date }}</div>
+          <div class="col-12 col-md-6">{{ form.category.label_tag }}{{ form.category }}</div>
+          <div class="col-12">{{ form.amount_krw.label_tag }}{{ form.amount_krw }}</div>
+          <div class="col-12">{{ form.comment.label_tag }}{{ form.comment }}</div>
+          <div class="col-12">{{ form.attachment.label_tag }}{{ form.attachment }}</div>
+          {% if form.errors %}
+            <div class="col-12"><div class="alert alert-danger">{{ form.errors }}</div></div>
+          {% endif %}
+          <div class="col-12 d-flex gap-2">
+            <button class="btn btn-primary">제출</button>
+            <a class="btn btn-outline-secondary" href="{% url 'expense-my-list' %}">취소</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

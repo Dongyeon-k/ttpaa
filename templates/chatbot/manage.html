@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}회칙 관리 | TTPAA 운영 포털{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-end mb-4">
+  <div>
+    <h1 class="h2 fw-bold mb-2">회칙 업로드 / 재인덱싱</h1>
+    <p class="text-secondary mb-0">PDF를 교체하면 기존 활성 문서는 비활성화되고 새 버전이 활성화됩니다.</p>
+  </div>
+</div>
+<div class="row g-4">
+  <div class="col-12 col-lg-5">
+    <div class="card shadow-soft border-0">
+      <div class="card-body">
+        <h2 class="h5 mb-3">새 회칙 업로드</h2>
+        <form method="post" enctype="multipart/form-data" data-busy-form data-busy-text="인덱싱 중입니다">
+          {% csrf_token %}
+          {{ upload_form.as_p }}
+          <button class="btn btn-primary" type="submit" data-busy-submit>업로드 및 인덱싱</button>
+          <div class="busy-progress d-none mt-3" data-busy-progress role="status" aria-live="polite">
+            <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+            <span>PDF를 읽고 OCR/인덱싱을 진행 중입니다. 잠시만 기다려 주세요.</span>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-7">
+    <div class="card shadow-soft border-0">
+      <div class="card-body">
+        <h2 class="h5 mb-3">문서 이력</h2>
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead><tr><th>버전</th><th>상태</th><th>인덱싱 결과</th><th>업로드일</th><th></th></tr></thead>
+            <tbody>
+              {% for doc in documents %}
+                <tr>
+                  <td>{{ doc.version_label }} {% if doc.is_active %}<span class="badge text-bg-success">활성</span>{% endif %}</td>
+                  <td>
+                    {{ doc.get_index_status_display }}
+                    {% if doc.index_error %}<div class="small text-danger">{{ doc.index_error }}</div>{% endif %}
+                  </td>
+                  <td class="small">
+                    페이지 {{ doc.page_count }}개 /
+                    청크 {{ doc.non_empty_chunk_count }}개 /
+                    글자 {{ doc.text_character_count }}자
+                    {% if doc.empty_page_count %}
+                      <div class="text-warning">빈 페이지 {{ doc.empty_page_count }}개</div>
+                    {% endif %}
+                  </td>
+                  <td>{{ doc.uploaded_at|date:"Y-m-d H:i" }}</td>
+                  <td>
+                    <div class="d-flex gap-2">
+                      <a class="btn btn-sm btn-outline-secondary" href="{{ doc.file.url }}" target="_blank">PDF</a>
+                      <a class="btn btn-sm btn-outline-dark" href="{% url 'constitution-raw-data' doc.pk %}">Raw 데이터</a>
+                      <form method="post" action="{% url 'constitution-reindex' doc.pk %}" data-busy-form data-busy-text="재인덱싱 중입니다">
+                        {% csrf_token %}
+                        <button class="btn btn-sm btn-outline-primary" type="submit" data-busy-submit>재인덱싱</button>
+                      </form>
+                    </div>
+                    <div class="busy-progress d-none mt-2" data-busy-progress role="status" aria-live="polite">
+                      <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+                      <span>인덱싱 진행 중입니다.</span>
+                    </div>
+                  </td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="5" class="text-center py-4 text-secondary">업로드된 회칙이 없습니다.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

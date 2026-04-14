@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ttpaa}
+      POSTGRES_USER: ${POSTGRES_USER:-ttpaa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ttpaa}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ttpaa} -d ${POSTGRES_DB:-ttpaa}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  web:
+    build: .
+    command: python manage.py runserver 0.0.0.0:8000
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-ttpaa}:${POSTGRES_PASSWORD:-ttpaa}@db:5432/${POSTGRES_DB:-ttpaa}
+      DJANGO_SETTINGS_MODULE: config.settings
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ./secrets:/app/secrets:ro
+      - media_data:/app/media
+      - static_data:/app/staticfiles
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  media_data:
+  static_data:
