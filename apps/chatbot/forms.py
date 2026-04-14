@@ -1,6 +1,7 @@
 from django import forms
 
 from apps.chatbot.models import ConstitutionDocument
+from services.pdf_ingestion import ALLOWED_CONSTITUTION_EXTENSIONS, get_constitution_file_extension
 
 
 class ConstitutionUploadForm(forms.ModelForm):
@@ -9,14 +10,14 @@ class ConstitutionUploadForm(forms.ModelForm):
         fields = ("version_label", "file")
         labels = {
             "version_label": "버전명",
-            "file": "PDF 파일",
+            "file": "회칙 파일",
         }
 
     def clean_file(self):
         file = self.cleaned_data["file"]
-        content_type = getattr(file, "content_type", "") or ""
-        if content_type != "application/pdf" and not file.name.lower().endswith(".pdf"):
-            raise forms.ValidationError("PDF 파일만 업로드할 수 있습니다.")
+        extension = get_constitution_file_extension(file.name)
+        if extension not in ALLOWED_CONSTITUTION_EXTENSIONS:
+            raise forms.ValidationError("PDF, DOCX, XLSX 파일만 업로드할 수 있습니다.")
         return file
 
     def __init__(self, *args, **kwargs):

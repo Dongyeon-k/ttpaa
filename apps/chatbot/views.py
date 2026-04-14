@@ -11,7 +11,7 @@ from apps.chatbot.forms import ChatQuestionForm, ConstitutionUploadForm
 from apps.chatbot.models import ConstitutionDocument, ConstitutionPage
 from apps.core.permissions import AdminRequiredMixin
 from services.openai_chatbot import ConstitutionChatService
-from services.pdf_ingestion import index_constitution_document
+from services.pdf_ingestion import get_constitution_file_extension, index_constitution_document
 
 
 def get_active_document_status():
@@ -125,7 +125,7 @@ class ConstitutionManageView(LoginRequiredMixin, AdminRequiredMixin, TemplateVie
             document.save()
             try:
                 index_constitution_document(document)
-                messages.success(request, "회칙 PDF 업로드 및 인덱싱이 완료되었습니다.")
+                messages.success(request, "회칙 파일 업로드 및 인덱싱이 완료되었습니다.")
             except Exception as exc:
                 messages.error(request, f"업로드는 되었지만 인덱싱에 실패했습니다: {exc}")
             return redirect("constitution-manage")
@@ -160,13 +160,19 @@ class ChatbotSourcePageView(LoginRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         page = self.object
-        context["pdf_page_url"] = f"{page.document.file.url}#page={page.page_number}"
+        is_pdf = get_constitution_file_extension(page.document.upload_filename or page.document.file.name) == ".pdf"
+        context["is_pdf"] = is_pdf
+        context["source_page_url"] = (
+            f"{page.document.file.url}#page={page.page_number}" if is_pdf else page.document.file.url
+        )
         return context
 
 
 class ChatbotSourcePageImageView(LoginRequiredMixin, View):
     def get(self, request, pk: int):
         page = get_object_or_404(ConstitutionPage.objects.select_related("document"), pk=pk)
+        if get_constitution_file_extension(page.document.upload_filename or page.document.file.name) != ".pdf":
+            raise Http404("Page image preview is only available for PDF files.")
         try:
             import fitz
 

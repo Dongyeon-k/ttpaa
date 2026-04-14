@@ -29,7 +29,7 @@
             </div>
           {% else %}
             <h2 class="h5 fw-bold mb-2">활성 회칙 없음</h2>
-            <p class="text-secondary mb-0">관리자가 회칙 PDF를 업로드하면 질문할 수 있습니다.</p>
+            <p class="text-secondary mb-0">관리자가 회칙 파일을 업로드하면 질문할 수 있습니다.</p>
           {% endif %}
         </div>
         {% if active_document %}
@@ -45,7 +45,7 @@
       {% if active_document.index_error %}
         <div class="alert alert-danger mt-3 mb-0">{{ active_document.index_error }}</div>
       {% elif active_document and active_document.text_character_count == 0 %}
-        <div class="alert alert-danger mt-3 mb-0">PDF에서 검색 가능한 텍스트를 찾지 못했습니다. OCR로도 텍스트를 찾지 못했거나 OCR 설정을 사용할 수 없습니다.</div>
+        <div class="alert alert-danger mt-3 mb-0">회칙 파일에서 검색 가능한 텍스트를 찾지 못했습니다. 파일 내용을 확인해 주세요.</div>
       {% elif active_document and not openai_configured %}
         <div class="alert alert-danger mt-3 mb-0">OpenAI API 키가 설정되지 않아 답변을 생성할 수 없습니다. 관리자에게 .env의 OPENAI_API_KEY 설정을 요청해 주세요.</div>
       {% elif active_document and not chatbot_ready %}

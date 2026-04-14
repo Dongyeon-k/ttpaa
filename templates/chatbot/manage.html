@@ -4,7 +4,7 @@
 <div class="d-flex justify-content-between align-items-end mb-4">
   <div>
     <h1 class="h2 fw-bold mb-2">회칙 업로드 / 재인덱싱</h1>
-    <p class="text-secondary mb-0">PDF를 교체하면 기존 활성 문서는 비활성화되고 새 버전이 활성화됩니다.</p>
+    <p class="text-secondary mb-0">PDF, DOCX, XLSX 회칙 파일을 교체하면 기존 활성 문서는 비활성화되고 새 버전이 활성화됩니다.</p>
   </div>
 </div>
 <div class="row g-4">
@@ -18,7 +18,7 @@
           <button class="btn btn-primary" type="submit" data-busy-submit>업로드 및 인덱싱</button>
           <div class="busy-progress d-none mt-3" data-busy-progress role="status" aria-live="polite">
             <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
-            <span>PDF를 읽고 OCR/인덱싱을 진행 중입니다. 잠시만 기다려 주세요.</span>
+            <span>회칙 파일을 읽고 인덱싱을 진행 중입니다. 잠시만 기다려 주세요.</span>
           </div>
         </form>
       </div>
@@ -50,7 +50,7 @@
                   <td>{{ doc.uploaded_at|date:"Y-m-d H:i" }}</td>
                   <td>
                     <div class="d-flex gap-2">
-                      <a class="btn btn-sm btn-outline-secondary" href="{{ doc.file.url }}" target="_blank">PDF</a>
+                      <a class="btn btn-sm btn-outline-secondary" href="{{ doc.file.url }}" target="_blank">원본 파일</a>
                       <a class="btn btn-sm btn-outline-dark" href="{% url 'constitution-raw-data' doc.pk %}">Raw 데이터</a>
                       <form method="post" action="{% url 'constitution-reindex' doc.pk %}" data-busy-form data-busy-text="재인덱싱 중입니다">
                         {% csrf_token %}

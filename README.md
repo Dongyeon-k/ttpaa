@@ -17,7 +17,7 @@ TTPAA 운영 포털은 4-5명의 임원진이 사용하는 비공개 내부 웹 
 |   `-- caddy/         # VPS HTTPS reverse proxy 설정
 |-- config/            # Django settings / urls / wsgi / asgi
 |-- docs/              # 운영/배포 문서
-|-- services/          # Google Drive/Sheets, PDF 인덱싱, OpenAI 챗봇, 알림
+|-- services/          # Google Drive/Sheets, 회칙 파일 인덱싱, OpenAI 챗봇, 알림
 |-- static/            # CSS, JS, PWA 아이콘
 |-- templates/         # Django 템플릿
 |-- tests/             # 핵심 플로우 테스트
@@ -35,7 +35,7 @@ TTPAA 운영 포털은 4-5명의 임원진이 사용하는 비공개 내부 웹 
 - 인증: Django 세션 인증, `admin` / `member` 두 역할
 - 지출 워크플로우: 제출 -> 검토중 -> 승인/반려 -> 지급완료
 - Google 연동: `paid` 상태에서만 Drive 업로드 + Sheets append
-- 챗봇: PDF 페이지 단위 텍스트/OCR 추출 -> PostgreSQL 저장 -> 간단한 lexical retrieval -> OpenAI 응답 -> quote/page post-validation
+- 챗봇: PDF/DOCX/XLSX 텍스트 추출 -> PostgreSQL 저장 -> 간단한 lexical retrieval -> OpenAI 응답 -> quote/page post-validation
 - PWA: manifest + service worker + installable icons + 오프라인 셸
 - 배포: Docker Compose 기준, VPS+Caddy 또는 PaaS Dockerfile 배포 지원
 
@@ -115,9 +115,9 @@ OpenAI 또는 Google 키가 비어 있으면:
 
 ### 4.2 회칙 챗봇
 
-- 관리자가 PDF 업로드 후 인덱싱
-- 페이지/청크 단위로 텍스트 저장
-- 인덱싱은 PDF의 선택 가능한 텍스트 레이어를 `pypdf`로 먼저 추출하고, 텍스트가 없는 페이지는 Tesseract OCR로 보완합니다.
+- 관리자가 PDF, DOCX, XLSX 회칙 파일 업로드 후 인덱싱
+- 페이지/청크 단위로 텍스트 저장합니다. DOCX는 문서 전체를 1페이지처럼, XLSX는 시트별로 페이지처럼 저장합니다.
+- PDF 인덱싱은 선택 가능한 텍스트 레이어를 `pypdf`로 먼저 추출하고, 텍스트가 없는 페이지는 Tesseract OCR로 보완합니다. DOCX는 `python-docx`, XLSX는 `openpyxl`로 텍스트를 추출합니다.
 - 답변은 정확한 quote/page citation이 검증될 때만 노출
 - 검증 실패, 근거 부족, 관련 없는 질문, OpenAI 설정/연결 문제는 서로 다른 메시지로 안내합니다.
 
@@ -303,6 +303,6 @@ docker compose exec web python manage.py test
 
 - `pgvector` 는 Docker 단순성을 위해 도입하지 않았습니다.
 - 회칙 retrieval 은 PostgreSQL 저장 + Python lexical scoring 기반입니다.
-- 회칙 PDF 인덱싱은 텍스트 레이어를 우선 사용하고, 텍스트가 없거나 너무 짧은 페이지는 Tesseract OCR로 텍스트 추출을 시도합니다. OCR 언어, 해상도, OCR fallback 기준은 `CONSTITUTION_OCR_LANG`, `CONSTITUTION_OCR_DPI`, `CONSTITUTION_OCR_MIN_TEXT_CHARS`로 조정할 수 있습니다.
+- 회칙 PDF 인덱싱은 텍스트 레이어를 우선 사용하고, 텍스트가 없거나 너무 짧은 페이지는 Tesseract OCR로 텍스트 추출을 시도합니다. DOCX/XLSX는 파일 내 텍스트를 직접 추출합니다. OCR 언어, 해상도, OCR fallback 기준은 `CONSTITUTION_OCR_LANG`, `CONSTITUTION_OCR_DPI`, `CONSTITUTION_OCR_MIN_TEXT_CHARS`로 조정할 수 있습니다.
 - HEIC 파일은 업로드/저장은 허용하지만 브라우저 미리보기는 환경에 따라 제한될 수 있습니다.
 - 백그라운드 큐(Celery/Redis)는 운영 단순성을 위해 제외했습니다.
