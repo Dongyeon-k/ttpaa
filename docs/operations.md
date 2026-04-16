@@ -15,6 +15,7 @@
 - 현재 활성 버전 확인: 대시보드 / 회칙 관리
 - 재인덱싱: `회칙 관리`의 `재인덱싱`
 - 챗봇이 근거 없이 답하면 안 되므로, 인용 검증 실패 시 의도적으로 답변을 거절하도록 설계되어 있습니다.
+- LLM 비용을 줄이려면 `.env`에서 `LLM_PROVIDER=gemini`, `GEMINI_CHAT_MODEL=gemini-2.5-flash`, `GEMINI_THINKING_BUDGET=0`을 사용합니다. OpenAI fallback이 필요하면 `LLM_PROVIDER=openai`로 전환합니다.
 
 ## 비밀값 교체
 
@@ -27,6 +28,7 @@
 - `DJANGO_SECRET_KEY`
 - `POSTGRES_PASSWORD`
 - `EMAIL_HOST_PASSWORD`
+- `GEMINI_API_KEY`
 - `OPENAI_API_KEY`
 - Google 서비스 계정 키
 

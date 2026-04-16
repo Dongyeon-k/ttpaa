@@ -7,7 +7,7 @@ from django.urls import reverse
 from apps.accounts.models import User
 from apps.chatbot.forms import ConstitutionUploadForm
 from apps.chatbot.models import ConstitutionChunk, ConstitutionDocument, ConstitutionPage
-from services.openai_chatbot import ConstitutionChatService, _tokenize
+from services.openai_chatbot import ConstitutionChatService, _quote_matches_page_text, _tokenize
 from services.pdf_ingestion import index_constitution_document
 
 
@@ -240,7 +240,7 @@ class ChatbotTests(TestCase):
 
         self.assertEqual([chunk.pk for chunk in chunks], [page.chunks.first().pk])
 
-    @override_settings(OPENAI_API_KEY="test-key")
+    @override_settings(LLM_PROVIDER="openai", OPENAI_API_KEY="test-key")
     def test_chatbot_uses_full_document_text_before_chunk_retrieval(self):
         document = ConstitutionDocument.objects.create(
             version_label="2026.04",
@@ -278,7 +278,63 @@ class ChatbotTests(TestCase):
         self.assertEqual(len(sources), 1)
         self.assertEqual(sources[0].text, page.text)
 
-    @override_settings(OPENAI_API_KEY="test-key")
+    def test_chatbot_validates_quote_with_normalized_whitespace(self):
+        page_text = (
+            '본 회의 명칭은 "고려대학교 피아노 동아리 교우회" 로 한다.\n'
+            '\t\t\t영문으로는 "Talk Through Piano Alumni Association" 으로 한다.\n'
+            '\t\t\t약칭으로는 "TTPAA" 로 표기한다.'
+        )
+        quote = (
+            '본 회의 명칭은 "고려대학교 피아노 동아리 교우회" 로 한다. '
+            '영문으로는 "Talk Through Piano Alumni Association" 으로 한다. '
+            '약칭으로는 "TTPAA" 로 표기한다.'
+        )
+
+        self.assertTrue(_quote_matches_page_text(quote, page_text))
+
+    @override_settings(LLM_PROVIDER="gemini", GEMINI_API_KEY="test-key", GEMINI_CHAT_MODEL="gemini-2.5-flash")
+    def test_chatbot_routes_to_gemini_provider(self):
+        document = ConstitutionDocument.objects.create(
+            version_label="2026.04",
+            file=SimpleUploadedFile("rules.pdf", b"%PDF-1.4 test", content_type="application/pdf"),
+            upload_filename="rules.pdf",
+            uploaded_by=self.admin,
+            is_active=True,
+            index_status=ConstitutionDocument.STATUS_INDEXED,
+        )
+        page = ConstitutionPage.objects.create(document=document, page_number=1, text='약칭으로는 "TTPAA" 로 표기한다.')
+        ConstitutionChunk.objects.create(
+            document=document,
+            page=page,
+            page_number=1,
+            chunk_index=1,
+            heading="제1조 명칭",
+            text=page.text,
+        )
+
+        with patch("services.openai_chatbot.ConstitutionChatService._create_gemini_client", return_value=object()):
+            with patch("services.openai_chatbot.ConstitutionChatService._call_gemini") as mocked:
+                mocked.return_value = {
+                    "supported": True,
+                    "answer": "회칙상 약칭은 TTPAA입니다.",
+                    "refusal_reason": None,
+                    "citations": [{"page": 1, "heading": "제1조 명칭", "quote": '약칭으로는 "TTPAA" 로 표기한다.'}],
+                }
+                result = ConstitutionChatService().answer_question(user=self.member, question="TTPAA가 뭐야?")
+
+        self.assertTrue(result["supported"])
+        self.assertEqual(result["refusal_reason"], "")
+        mocked.assert_called_once()
+
+    @override_settings(LLM_PROVIDER="gemini", GEMINI_API_KEY="")
+    def test_chatbot_reports_missing_gemini_key(self):
+        result = ConstitutionChatService().answer_question(user=self.member, question="TTPAA가 뭐야?")
+
+        self.assertFalse(result["supported"])
+        self.assertEqual(result["error_type"], "configuration")
+        self.assertIn("GEMINI_API_KEY", result["refusal_reason"])
+
+    @override_settings(LLM_PROVIDER="openai", OPENAI_API_KEY="test-key")
     def test_chatbot_supported_answer_with_exact_quote(self):
         document = ConstitutionDocument.objects.create(
             version_label="2026.04",
@@ -303,8 +359,9 @@ class ChatbotTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "회칙상 동문회의 목적은 친목 도모입니다.")
         self.assertContains(response, "페이지 1")
+        self.assertNotContains(response, "출처 보기")
 
-    @override_settings(OPENAI_API_KEY="test-key")
+    @override_settings(LLM_PROVIDER="openai", OPENAI_API_KEY="test-key")
     def test_chatbot_refuses_when_unsupported(self):
         document = ConstitutionDocument.objects.create(
             version_label="2026.04",

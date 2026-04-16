@@ -17,7 +17,7 @@ TTPAA 운영 포털은 4-5명의 임원진이 사용하는 비공개 내부 웹 
 |   `-- caddy/         # VPS HTTPS reverse proxy 설정
 |-- config/            # Django settings / urls / wsgi / asgi
 |-- docs/              # 운영/배포 문서
-|-- services/          # Google Drive/Sheets, 회칙 파일 인덱싱, OpenAI 챗봇, 알림
+|-- services/          # Google Drive/Sheets, 회칙 파일 인덱싱, LLM 챗봇, 알림
 |-- static/            # CSS, JS, PWA 아이콘
 |-- templates/         # Django 템플릿
 |-- tests/             # 핵심 플로우 테스트
@@ -35,7 +35,7 @@ TTPAA 운영 포털은 4-5명의 임원진이 사용하는 비공개 내부 웹 
 - 인증: Django 세션 인증, `admin` / `member` 두 역할
 - 지출 워크플로우: 제출 -> 검토중 -> 승인/반려 -> 지급완료
 - Google 연동: `paid` 상태에서만 Drive 업로드 + Sheets append
-- 챗봇: PDF/DOCX/XLSX 텍스트 추출 -> PostgreSQL 저장 -> 간단한 lexical retrieval -> OpenAI 응답 -> quote/page post-validation
+- 챗봇: PDF/DOCX/XLSX 텍스트 추출 -> PostgreSQL 저장 -> 전체 회칙 텍스트 기반 LLM 응답 -> quote/page post-validation
 - PWA: manifest + service worker + installable icons + 오프라인 셸
 - 배포: Docker Compose 기준, VPS+Caddy 또는 PaaS Dockerfile 배포 지원
 
@@ -90,14 +90,17 @@ docker compose exec web python manage.py collectstatic --noinput
 
 선택 환경변수:
 
-- `OPENAI_API_KEY`
+- `LLM_PROVIDER`: `gemini` 또는 `openai`
+- `GEMINI_API_KEY`
+- `GEMINI_CHAT_MODEL`: 기본 `gemini-2.5-flash`
+- `OPENAI_API_KEY`: OpenAI fallback 사용 시
 - `GOOGLE_SERVICE_ACCOUNT_FILE` 또는 `GOOGLE_SERVICE_ACCOUNT_JSON`
 - `GOOGLE_DRIVE_FOLDER_ID`
 - `GOOGLE_SHEET_ID`
 - `GOOGLE_SHEET_NAME`: 비워두면 첫 시트 또는 기본 범위에 append
 - `EMAIL_*`
 
-OpenAI 또는 Google 키가 비어 있으면:
+LLM 또는 Google 키가 비어 있으면:
 
 - 챗봇은 안전하게 답변을 거절합니다.
 - Google 동기화는 실패 상태와 로그를 남기고 관리자 재시도를 기다립니다.
@@ -118,8 +121,8 @@ OpenAI 또는 Google 키가 비어 있으면:
 - 관리자가 PDF, DOCX, XLSX 회칙 파일 업로드 후 인덱싱
 - 페이지/청크 단위로 텍스트 저장합니다. DOCX는 문서 전체를 1페이지처럼, XLSX는 시트별로 페이지처럼 저장합니다.
 - PDF 인덱싱은 선택 가능한 텍스트 레이어를 `pypdf`로 먼저 추출하고, 텍스트가 없는 페이지는 Tesseract OCR로 보완합니다. DOCX는 `python-docx`, XLSX는 `openpyxl`로 텍스트를 추출합니다.
-- 답변은 정확한 quote/page citation이 검증될 때만 노출
-- 검증 실패, 근거 부족, 관련 없는 질문, OpenAI 설정/연결 문제는 서로 다른 메시지로 안내합니다.
+- 답변은 quote/page citation이 검증될 때만 노출합니다. 공백/줄바꿈 차이는 정규화해 검증합니다.
+- 검증 실패, 근거 부족, 관련 없는 질문, LLM 설정/연결 문제는 서로 다른 메시지로 안내합니다.
 
 ### 4.3 관리자 운영
 
@@ -181,7 +184,11 @@ EMAIL_HOST_USER=no-reply@portal.example.com
 EMAIL_HOST_PASSWORD=change-me
 EMAIL_USE_TLS=True
 ADMIN_EMAILS=finance@example.com
-OPENAI_API_KEY=sk-...
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=...
+GEMINI_CHAT_MODEL=gemini-2.5-flash
+GEMINI_THINKING_BUDGET=0
+OPENAI_API_KEY=
 GOOGLE_SERVICE_ACCOUNT_FILE=/app/secrets/google-service-account.json
 GOOGLE_DRIVE_FOLDER_ID=...
 GOOGLE_SHEET_ID=...
@@ -302,7 +309,7 @@ docker compose exec web python manage.py test
 ## 10. 한계와 설계 선택
 
 - `pgvector` 는 Docker 단순성을 위해 도입하지 않았습니다.
-- 회칙 retrieval 은 PostgreSQL 저장 + Python lexical scoring 기반입니다.
+- 회칙 챗봇은 작은 문서에서는 페이지 전체 텍스트를 LLM 컨텍스트로 전달하고, 문서가 너무 큰 경우 PostgreSQL 저장 청크 + Python lexical scoring으로 fallback합니다.
 - 회칙 PDF 인덱싱은 텍스트 레이어를 우선 사용하고, 텍스트가 없거나 너무 짧은 페이지는 Tesseract OCR로 텍스트 추출을 시도합니다. DOCX/XLSX는 파일 내 텍스트를 직접 추출합니다. OCR 언어, 해상도, OCR fallback 기준은 `CONSTITUTION_OCR_LANG`, `CONSTITUTION_OCR_DPI`, `CONSTITUTION_OCR_MIN_TEXT_CHARS`로 조정할 수 있습니다.
 - HEIC 파일은 업로드/저장은 허용하지만 브라우저 미리보기는 환경에 따라 제한될 수 있습니다.
 - 백그라운드 큐(Celery/Redis)는 운영 단순성을 위해 제외했습니다.

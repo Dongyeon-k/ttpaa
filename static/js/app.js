@@ -89,3 +89,15 @@ document.body.addEventListener("htmx:afterRequest", (event) => {
     resetFormBusy(form);
   }
 });
+
+document.body.addEventListener("htmx:responseError", (event) => {
+  const form = event.target.closest("[data-busy-form]");
+  if (form) {
+    resetFormBusy(form);
+  }
+
+  const target = event.detail.target;
+  if (target) {
+    target.innerHTML = '<div class="alert alert-danger mb-0">요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.</div>';
+  }
+});

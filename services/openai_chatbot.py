@@ -13,6 +13,13 @@ from apps.chatbot.models import ChatQueryLog, ConstitutionDocument, Constitution
 
 logger = logging.getLogger("ttpaa")
 
+SYSTEM_PROMPT = (
+    "당신은 TTPAA 회칙 전용 검증 보조기입니다. "
+    "제공된 출처 텍스트만 사용해 JSON으로 답하십시오. "
+    "지원되지 않으면 supported=false 와 refusal_reason 를 반환하십시오. "
+    "supported=true 인 경우 citations 배열의 각 quote 는 출처 텍스트에 정확히 존재해야 하며 page 와 일치해야 합니다. "
+    "추측, 일반 상식, 불확실한 해석을 금지합니다."
+)
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9]+|[가-힣]+")
 KOREAN_PARTICLES = (
     "으로부터",
@@ -91,9 +98,69 @@ def _tokenize(text: str, *, drop_stopwords: bool = False) -> list[str]:
     return tokens
 
 
+def _normalize_quote_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _quote_matches_page_text(quote: str, page_text: str) -> bool:
+    return quote in page_text or _normalize_quote_text(quote) in _normalize_quote_text(page_text)
+
+
+def _parse_json_response(text: str) -> dict:
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    return json.loads(cleaned)
+
+
+def _normalize_result(result: dict) -> dict:
+    result["answer"] = result.get("answer") or ""
+    result["refusal_reason"] = result.get("refusal_reason") or ""
+    result["citations"] = result.get("citations") or []
+    return result
+
+
 class ConstitutionChatService:
     def __init__(self):
-        self.client = OpenAI(api_key=settings.OPENAI_API_KEY) if settings.OPENAI_API_KEY else None
+        self.provider = (getattr(settings, "LLM_PROVIDER", "openai") or "openai").lower()
+        self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY) if settings.OPENAI_API_KEY else None
+        self.gemini_client = self._create_gemini_client() if self.provider == "gemini" else None
+
+    def _create_gemini_client(self):
+        if not settings.GEMINI_API_KEY:
+            return None
+        try:
+            from google import genai
+        except ImportError:
+            logger.exception("gemini_sdk_missing")
+            return None
+        return genai.Client(api_key=settings.GEMINI_API_KEY)
+
+    def _is_configured(self) -> bool:
+        if self.provider == "openai":
+            return bool(self.openai_client)
+        if self.provider == "gemini":
+            return bool(self.gemini_client)
+        return False
+
+    def _configuration_error(self) -> dict:
+        if self.provider == "gemini":
+            if not settings.GEMINI_API_KEY:
+                message = "Gemini API 키가 설정되지 않아 답변을 생성할 수 없습니다. .env의 GEMINI_API_KEY를 설정해 주세요."
+            else:
+                message = "Gemini SDK를 사용할 수 없습니다. requirements 설치 후 컨테이너를 다시 빌드해 주세요."
+        elif self.provider == "openai":
+            message = "OpenAI API 키가 설정되지 않아 답변을 생성할 수 없습니다. 관리자에게 .env의 OPENAI_API_KEY 설정을 요청해 주세요."
+        else:
+            message = f"지원하지 않는 LLM_PROVIDER입니다: {self.provider}"
+        return {
+            "supported": False,
+            "answer": "",
+            "refusal_reason": message,
+            "error_type": "configuration",
+            "citations": [],
+        }
 
     def _retrieve_chunks(self, question: str, document: ConstitutionDocument | None = None):
         document = document or ConstitutionDocument.objects.filter(
@@ -134,48 +201,63 @@ class ConstitutionChatService:
         return self._retrieve_chunks(question, document=document)
 
     def _call_openai(self, question: str, sources) -> dict:
-        if not self.client:
-            return {
-                "supported": False,
-                "answer": "",
-                "refusal_reason": "OpenAI API 키가 설정되지 않아 답변을 생성할 수 없습니다. 관리자에게 .env의 OPENAI_API_KEY 설정을 요청해 주세요.",
-                "error_type": "configuration",
-                "citations": [],
-            }
+        if not self._is_configured():
+            return self._configuration_error()
 
         source_block = "\n\n".join(
             f"[page={source.page_number} heading={source.heading or '-'}]\n{source.text}" for source in sources
         )
-        response = self.client.chat.completions.create(
+        if self.provider == "gemini":
+            return self._call_gemini(question, source_block)
+        return self._call_openai_api(question, source_block)
+
+    def _build_user_prompt(self, question: str, source_block: str) -> str:
+        return (
+            f"질문: {question}\n\n"
+            "반환 JSON 스키마:\n"
+            '{"supported": bool, "answer": str, "refusal_reason": str, '
+            '"citations": [{"page": int, "heading": str, "quote": str}]}\n\n'
+            f"출처:\n{source_block}"
+        )
+
+    def _call_openai_api(self, question: str, source_block: str) -> dict:
+        response = self.openai_client.chat.completions.create(
             model=settings.OPENAI_CHAT_MODEL,
             temperature=0,
             response_format={"type": "json_object"},
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "당신은 TTPAA 회칙 전용 검증 보조기입니다. "
-                        "제공된 출처 텍스트만 사용해 JSON으로 답하십시오. "
-                        "지원되지 않으면 supported=false 와 refusal_reason 를 반환하십시오. "
-                        "supported=true 인 경우 citations 배열의 각 quote 는 출처 텍스트에 정확히 존재해야 하며 page 와 일치해야 합니다. "
-                        "추측, 일반 상식, 불확실한 해석을 금지합니다."
-                    ),
+                    "content": SYSTEM_PROMPT,
                 },
                 {
                     "role": "user",
-                    "content": (
-                        f"질문: {question}\n\n"
-                        "반환 JSON 스키마:\n"
-                        '{"supported": bool, "answer": str, "refusal_reason": str, '
-                        '"citations": [{"page": int, "heading": str, "quote": str}]}\n\n'
-                        f"출처:\n{source_block}"
-                    ),
+                    "content": self._build_user_prompt(question, source_block),
                 },
             ],
         )
-        return json.loads(response.choices[0].message.content)
+        return _parse_json_response(response.choices[0].message.content)
+
+    def _call_gemini(self, question: str, source_block: str) -> dict:
+        from google.genai import types
+
+        config_kwargs = {
+            "system_instruction": SYSTEM_PROMPT,
+            "temperature": 0,
+            "response_mime_type": "application/json",
+        }
+        if settings.GEMINI_THINKING_BUDGET >= 0:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=settings.GEMINI_THINKING_BUDGET)
+
+        response = self.gemini_client.models.generate_content(
+            model=settings.GEMINI_CHAT_MODEL,
+            contents=self._build_user_prompt(question, source_block),
+            config=types.GenerateContentConfig(**config_kwargs),
+        )
+        return _parse_json_response(response.text)
 
     def _validate_result(self, document, result: dict) -> dict:
+        result = _normalize_result(result)
         if not result.get("supported"):
             return result
         citations = result.get("citations") or []
@@ -191,7 +273,7 @@ class ConstitutionChatService:
             page_number = citation.get("page")
             quote = citation.get("quote", "")
             page = ConstitutionPage.objects.filter(document=document, page_number=page_number).first()
-            if not page or not quote or quote not in page.text:
+            if not page or not quote or not _quote_matches_page_text(quote, page.text):
                 logger.warning("chatbot_validation_failed page=%s quote=%s", page_number, quote)
                 return {
                     "supported": False,
@@ -212,14 +294,8 @@ class ConstitutionChatService:
 
     def answer_question(self, *, user, question: str) -> dict:
         document, sources = self._retrieve_sources(question)
-        if not self.client:
-            result = {
-                "supported": False,
-                "answer": "",
-                "refusal_reason": "OpenAI API 키가 설정되지 않아 답변을 생성할 수 없습니다. 관리자에게 .env의 OPENAI_API_KEY 설정을 요청해 주세요.",
-                "error_type": "configuration",
-                "citations": [],
-            }
+        if not self._is_configured():
+            result = self._configuration_error()
         elif not document:
             result = {
                 "supported": False,
@@ -291,7 +367,7 @@ class ConstitutionChatService:
                 result = {
                     "supported": False,
                     "answer": "",
-                    "refusal_reason": "OpenAI 답변 생성 중 오류가 발생했습니다. API 키, 네트워크, 모델 설정을 확인해 주세요.",
+                    "refusal_reason": "답변 생성 중 오류가 발생했습니다. API 키, 네트워크, 모델 설정을 확인해 주세요.",
                     "error_type": "connection",
                     "citations": [],
                 }
@@ -301,8 +377,8 @@ class ConstitutionChatService:
             user=user,
             question=question,
             supported=result.get("supported", False),
-            answer_text=result.get("answer", ""),
-            refusal_reason=result.get("refusal_reason", ""),
+            answer_text=result.get("answer") or "",
+            refusal_reason=result.get("refusal_reason") or "",
             raw_response_json=json.dumps(result, ensure_ascii=False),
         )
         logger.info(

@@ -8,7 +8,6 @@
       <div class="citation-card mb-3">
         <div class="d-flex justify-content-between align-items-center mb-2">
           <span class="badge text-bg-dark">페이지 {{ citation.page }}</span>
-          <a class="btn btn-sm btn-outline-secondary" href="{% url 'chatbot-source-page' citation.page_id %}">출처 보기</a>
         </div>
         {% if citation.heading %}<div class="small text-secondary mb-2">{{ citation.heading }}</div>{% endif %}
         <blockquote class="mb-0">{{ citation.quote }}</blockquote>
