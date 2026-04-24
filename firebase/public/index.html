@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#12312b" />
+    <title>TTPAA Operations Portal</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/assets/icon-192.png" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/firebase-config.js"></script>
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#dashboard" aria-label="TTPAA dashboard">
+        <img src="/assets/icon-192.png" alt="" width="34" height="34" />
+        <span>TTPAA</span>
+      </a>
+      <nav class="nav" aria-label="주요 메뉴">
+        <a href="#dashboard" data-route-link="dashboard">홈</a>
+        <a href="#new-expense" data-route-link="new-expense">지출 신청</a>
+        <a href="#my-expenses" data-route-link="my-expenses">내 신청</a>
+        <a href="#admin" data-admin-only data-route-link="admin">관리</a>
+        <a href="#policy" data-route-link="policy">규정 검색</a>
+      </nav>
+      <button class="ghost-button" id="sign-out-button" type="button" hidden>로그아웃</button>
+    </header>
+
+    <main>
+      <section class="auth-screen" id="auth-screen">
+        <div class="auth-copy">
+          <img src="/assets/icon-512.png" alt="" width="84" height="84" />
+          <p class="eyebrow">Firebase edition</p>
+          <h1>가볍게 신청하고, 필요한 사람만 확인합니다.</h1>
+          <p>친한 사람들끼리 쓰는 작은 운영 포털입니다. 계정은 Firebase Auth로 관리하고 신청 내역은 Firestore에 저장합니다.</p>
+        </div>
+        <form class="auth-form" id="auth-form">
+          <h2>로그인</h2>
+          <label>
+            이메일
+            <input id="auth-email" type="email" autocomplete="email" required />
+          </label>
+          <label>
+            비밀번호
+            <input id="auth-password" type="password" autocomplete="current-password" minlength="6" required />
+          </label>
+          <div class="button-row">
+            <button type="submit">로그인</button>
+            <button class="secondary-button" id="create-account-button" type="button">계정 만들기</button>
+          </div>
+          <p class="form-note">처음 만든 계정은 member로 시작합니다. 첫 관리자는 Firebase Console에서 `users/{uid}.role`을 `admin`으로 바꾸면 됩니다.</p>
+        </form>
+      </section>
+
+      <section class="app-shell" id="app-shell" hidden>
+        <div class="notice" id="notice" role="status" aria-live="polite"></div>
+
+        <section class="page" id="page-dashboard" data-page="dashboard">
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">오늘의 상태</p>
+              <h1 id="dashboard-greeting">반갑습니다.</h1>
+            </div>
+            <span class="role-pill" id="role-pill">member</span>
+          </div>
+          <div class="stats-grid">
+            <article class="stat">
+              <span>내 신청</span>
+              <strong id="stat-my-total">0</strong>
+            </article>
+            <article class="stat">
+              <span>대기 중</span>
+              <strong id="stat-pending">0</strong>
+            </article>
+            <article class="stat">
+              <span>지급 완료</span>
+              <strong id="stat-paid">0</strong>
+            </article>
+          </div>
+          <div class="content-band">
+            <h2>최근 신청</h2>
+            <div class="list" id="dashboard-recent"></div>
+          </div>
+        </section>
+
+        <section class="page" id="page-new-expense" data-page="new-expense" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">지출 신청</p>
+              <h1>필요한 내용만 적으면 됩니다.</h1>
+            </div>
+          </div>
+          <form class="panel-form" id="expense-form">
+            <div class="form-grid">
+              <label>
+                지출일
+                <input id="expense-date" type="date" required />
+              </label>
+              <label>
+                카테고리
+                <select id="expense-category" required></select>
+              </label>
+              <label>
+                금액
+                <input id="expense-amount" type="number" inputmode="numeric" min="1" required />
+              </label>
+              <label>
+                보조 자료 링크
+                <input id="expense-receipt-url" type="url" placeholder="이미지 외 참고 링크가 있으면 입력" />
+              </label>
+            </div>
+            <label>
+              영수증/자료 이미지
+              <input id="expense-receipt-files" type="file" accept="image/*" multiple />
+              <span class="form-note">컴퓨터나 휴대폰에서 이미지를 직접 첨부할 수 있습니다. 지급 완료 시 Drive에 자동 저장됩니다.</span>
+            </label>
+            <label>
+              메모
+              <textarea id="expense-comment" rows="4" placeholder="간단한 사유나 참고 내용을 적어주세요."></textarea>
+            </label>
+            <button type="submit">신청하기</button>
+          </form>
+        </section>
+
+        <section class="page" id="page-my-expenses" data-page="my-expenses" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">내 신청</p>
+              <h1>내가 올린 지출 요청입니다.</h1>
+            </div>
+          </div>
+          <div class="list" id="my-expense-list"></div>
+        </section>
+
+        <section class="page" id="page-admin" data-page="admin" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">관리</p>
+              <h1>신청을 검토하고 상태를 바꿉니다.</h1>
+            </div>
+          </div>
+          <div class="toolbar">
+            <select id="admin-status-filter" aria-label="상태 필터">
+              <option value="">전체 상태</option>
+              <option value="submitted">제출됨</option>
+              <option value="under_review">검토중</option>
+              <option value="approved">승인</option>
+              <option value="rejected">반려</option>
+              <option value="paid">지급 완료</option>
+            </select>
+            <button class="secondary-button" id="seed-categories-button" type="button">기본 카테고리 넣기</button>
+          </div>
+          <div class="list" id="admin-expense-list"></div>
+        </section>
+
+        <section class="page" id="page-policy" data-page="policy" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">규정 검색</p>
+              <h1>저장된 규정 문장에서 바로 찾습니다.</h1>
+            </div>
+          </div>
+          <form class="search-row" id="policy-search-form">
+            <input id="policy-query" type="search" placeholder="예: 회비, 경조사, 승인" required />
+            <button type="submit">검색</button>
+          </form>
+          <form class="panel-form admin-panel" id="policy-import-form" data-admin-only>
+            <h2>규정 텍스트 가져오기</h2>
+            <label>
+              버전 이름
+              <input id="policy-version" type="text" placeholder="2026 운영 규정" />
+            </label>
+            <label>
+              원문 또는 JSON 배열
+              <textarea id="policy-text" rows="8" placeholder='[{"section":"제5장 상벌","article":"제20조 임원의 포상, 징계 및 파면","clause":"③","paragraph":"임원이 본 회 및 피아노 동아리의 운영에..."}]'></textarea>
+            </label>
+            <button type="submit">규정 저장</button>
+          </form>
+          <div class="list" id="policy-results"></div>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

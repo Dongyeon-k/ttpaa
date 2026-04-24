@@ -1,315 +1,574 @@
 # TTPAA Operations Portal
 
-TTPAA 운영 포털은 4-5명의 임원진이 사용하는 비공개 내부 웹 서비스입니다.  
-핵심 기능은 `지출 청구 워크플로우`와 `회칙/규정 근거 기반 챗봇`이며, Docker-first 운영을 전제로 설계했습니다.
+TTPAA Operations Portal은 고려대학교 피아노 동아리 교우회 내부에서 쓰는 소규모 운영 웹앱입니다. 현재 버전은 Firebase 기반 정적 웹앱입니다.
 
-## 1. 프로젝트 구조
+운영 목표는 단순합니다.
+
+- 친한 구성원끼리 가끔 사용
+- 서버 운영 없이 Firebase Hosting + Firebase Auth + Firestore로 운영
+- 지출 신청과 검토 상태를 Firestore에 저장
+- 회칙 데이터는 Firestore에 구조화 저장
+- 회칙 질문은 Apps Script Web App을 거쳐 Gemini API를 1회 호출
+
+## Current Stack
+
+- Frontend: static HTML/CSS/JavaScript
+- Hosting: Firebase Hosting
+- Auth: Firebase Authentication email/password
+- Database: Cloud Firestore
+- Policy chatbot proxy: Google Apps Script Web App
+- LLM: Gemini API, default `gemini-2.5-flash`
+- Policy import: Node.js script using Firebase Web SDK
+
+Live hosting target:
+
+```text
+https://ttpaa.web.app
+```
+
+Firebase project:
+
+```text
+ttpaa-c64a6
+```
+
+## Repository Layout
 
 ```text
 .
-|-- apps/
-|   |-- accounts/      # 사용자/권한/관리 설정/시드 명령
-|   |-- chatbot/       # 회칙 업로드, 인덱싱, 근거 기반 챗봇 UI
-|   |-- core/          # 대시보드, 공통 권한, 알림 로그, 헬스체크
-|   |-- expenses/      # 지출 요청, 상태 전환, 감사 이력, Google 동기화
-|   `-- pwa/           # manifest/service worker
-|-- compose/
-|   `-- caddy/         # VPS HTTPS reverse proxy 설정
-|-- config/            # Django settings / urls / wsgi / asgi
-|-- docs/              # 운영/배포 문서
-|-- services/          # Google Drive/Sheets, 회칙 파일 인덱싱, LLM 챗봇, 알림
-|-- static/            # CSS, JS, PWA 아이콘
-|-- templates/         # Django 템플릿
-|-- tests/             # 핵심 플로우 테스트
-|-- Dockerfile
-|-- docker-compose.yml
-|-- compose.production.yml
-|-- .env.example
-`-- scripts/entrypoint.sh
+|-- firebase.json                         # Firebase Hosting and Firestore deploy config
+|-- .firebaserc                           # Firebase project alias
+|-- firebase/
+|   |-- firestore.rules                   # Firestore security rules
+|   |-- firestore.indexes.json            # Firestore indexes
+|   `-- public/
+|       |-- index.html                    # Static app shell
+|       |-- app.js                        # Firebase Auth, Firestore, UI logic
+|       |-- styles.css
+|       |-- firebase-config.js            # Firebase web config and chatbot endpoint
+|       |-- firebase-config.example.js
+|       |-- manifest.webmanifest
+|       |-- service-worker.js
+|       `-- assets/
+|-- data/
+|   `-- policies/
+|       `-- ttpaa-policy.json             # Structured TTPAA bylaws data
+|-- integrations/
+|   |-- apps-script-policy-chatbot.gs     # Apps Script Gemini chatbot endpoint
+|   `-- apps-script-expense-sync.gs       # Apps Script Drive/Sheets expense sync endpoint
+|-- scripts/
+|   |-- import-policy-client.mjs          # Import policy using Firebase Auth admin user
+|   `-- import-policy.mjs                 # Admin SDK import option, requires ADC/service account
+|-- docs/
+|   `-- firebase-migration.md             # Migration notes and deeper setup notes
+|-- package.json
+`-- package-lock.json
 ```
 
-## 2. 아키텍처 요약
+## Features
 
-- 백엔드: Django 5 + PostgreSQL + Django Templates
-- 동적 UX: HTMX로 관리자 큐/챗봇 응답 부분만 부분 갱신
-- 인증: Django 세션 인증, `admin` / `member` 두 역할
-- 지출 워크플로우: 제출 -> 검토중 -> 승인/반려 -> 지급완료
-- Google 연동: `paid` 상태에서만 Drive 업로드 + Sheets append
-- 챗봇: PDF/DOCX/XLSX 텍스트 추출 -> PostgreSQL 저장 -> 전체 회칙 텍스트 기반 LLM 응답 -> quote/page post-validation
-- PWA: manifest + service worker + installable icons + 오프라인 셸
-- 배포: Docker Compose 기준, VPS+Caddy 또는 PaaS Dockerfile 배포 지원
+### Authentication
 
-## 3. 로컬 Docker 실행
+Users sign in with Firebase Authentication email/password accounts.
 
-### 3.1 사전 준비
+On first login, the app creates a Firestore profile:
 
-1. `.env.example`을 `.env`로 복사합니다.
-2. 필수 값을 채웁니다.
-3. Docker Desktop 또는 Docker Engine이 실행 중인지 확인합니다.
-
-```bash
-cp .env.example .env
+```text
+users/{uid}
 ```
 
-Windows PowerShell:
+Default profile:
+
+```json
+{
+  "uid": "firebase-auth-uid",
+  "email": "user@example.com",
+  "displayName": "user",
+  "role": "member",
+  "createdAt": "...",
+  "updatedAt": "..."
+}
+```
+
+Roles:
+
+- `member`: submit and view own expense requests, read policy data, ask the policy chatbot
+- `admin`: all member permissions plus expense review, policy import, category setup, user/profile administration through Firestore
+
+To make an admin, create or sign in with the account, then edit Firestore:
+
+```text
+users/{uid}.role = "admin"
+```
+
+### Expense Requests
+
+Firestore collection:
+
+```text
+expenseRequests/{requestId}
+```
+
+The app supports:
+
+- expense request creation
+- my request list
+- admin queue
+- status transitions
+- status history
+- receipt image upload from desktop or mobile
+- optional receipt/reference URL field
+- Drive image copy and Sheets append when an admin marks a request as paid
+
+Statuses:
+
+```text
+submitted
+under_review
+approved
+rejected
+paid
+```
+
+Status history is stored under:
+
+```text
+expenseRequests/{requestId}/statusHistory/{historyId}
+```
+
+### Policy Data
+
+Firestore collection:
+
+```text
+policyPages/{policyId}
+```
+
+Policy entries are stored as structured records:
+
+```json
+{
+  "version": "TTPAA 회칙",
+  "order": 1,
+  "section": "제1장 총칙",
+  "article": "제1조 명칭",
+  "clause": "①",
+  "subclause": "",
+  "paragraph": "본문",
+  "createdAt": "...",
+  "updatedAt": "..."
+}
+```
+
+The current seed data lives at:
+
+```text
+data/policies/ttpaa-policy.json
+```
+
+It currently contains 78 policy records.
+
+### Policy Chatbot
+
+The browser does not call Gemini directly. Gemini API keys must not be exposed in browser JavaScript.
+
+Current flow:
+
+```text
+Browser
+  -> reads policyPages from Firestore
+  -> sends question + policy JSON + Firebase idToken to Apps Script endpoint
+Apps Script
+  -> verifies Firebase idToken
+  -> calls Gemini generateContent once
+  -> returns answer + evidence
+Browser
+  -> renders answer and cited section/article/clause/paragraph
+```
+
+One user question results in:
+
+- one Firestore read pass for policy data
+- one Apps Script request
+- one Gemini API call
+
+The chatbot endpoint returns JSON:
+
+```json
+{
+  "answer": "한국어 답변",
+  "evidence": [
+    {
+      "section": "제4장 재무",
+      "article": "제17조 재정의 집행",
+      "clause": "⑤",
+      "paragraph": "회원 본인의 결혼..."
+    }
+  ]
+}
+```
+
+## Firebase Setup
+
+The Firebase project must have:
+
+- Firebase Authentication enabled
+- Email/Password sign-in enabled
+- Cloud Firestore database created
+- Firebase Storage enabled
+- Firebase Hosting site `ttpaa`
+
+Firestore database:
+
+```text
+(default)
+location: asia-northeast3
+edition: standard
+free tier: true
+```
+
+Deploy Firestore rules and indexes:
 
 ```powershell
-Copy-Item .env.example .env
+firebase deploy --only firestore --project ttpaa-c64a6
 ```
 
-### 3.2 컨테이너 실행
+Deploy Storage rules:
 
-```bash
-docker compose up --build
+```powershell
+firebase deploy --only storage --project ttpaa-c64a6
 ```
 
-앱은 기본적으로 `http://localhost:8000` 에서 열립니다.
+Deploy Hosting:
 
-### 3.3 초기 설정
-
-새 터미널에서 다음을 실행합니다.
-
-```bash
-docker compose exec web python manage.py createsuperuser
-docker compose exec web python manage.py seed_demo
+```powershell
+firebase deploy --only hosting:ttpaa --project ttpaa-c64a6
 ```
 
-선택 명령:
+Deploy both:
 
-```bash
-docker compose exec web python manage.py test
-docker compose exec web python manage.py collectstatic --noinput
+```powershell
+firebase deploy --only firestore,hosting:ttpaa --project ttpaa-c64a6
 ```
 
-### 3.4 로컬 필수 환경변수
+## Local Configuration
 
-- `DJANGO_SECRET_KEY`
-- `DJANGO_DEBUG=True`
-- `DJANGO_ALLOWED_HOSTS`
-- `DATABASE_URL`
+Firebase web config lives in:
 
-선택 환경변수:
-
-- `LLM_PROVIDER`: `gemini` 또는 `openai`
-- `GEMINI_API_KEY`
-- `GEMINI_CHAT_MODEL`: 기본 `gemini-2.5-flash`
-- `OPENAI_API_KEY`: OpenAI fallback 사용 시
-- `GOOGLE_SERVICE_ACCOUNT_FILE` 또는 `GOOGLE_SERVICE_ACCOUNT_JSON`
-- `GOOGLE_DRIVE_FOLDER_ID`
-- `GOOGLE_SHEET_ID`
-- `GOOGLE_SHEET_NAME`: 비워두면 첫 시트 또는 기본 범위에 append
-- `EMAIL_*`
-
-LLM 또는 Google 키가 비어 있으면:
-
-- 챗봇은 안전하게 답변을 거절합니다.
-- Google 동기화는 실패 상태와 로그를 남기고 관리자 재시도를 기다립니다.
-
-## 4. 운영 기능 요약
-
-### 4.1 지출 요청
-
-- 일반 구성원은 모바일/데스크톱에서 사진 첨부와 함께 지출 요청 제출
-- 관리자는 필터 가능한 검토 큐에서 승인/반려/지급 완료 처리
-- 상태 변경 이력, 관리자 메모, 반려 사유, Google 동기화 상태를 상세 화면에서 확인
-- `paid` 전환 시 Google Drive/Sheets 동기화 수행
-- 기본 Sheets 출력은 `buffer` 탭 기준 A열 지출일자, B열 사유 분류, C열 청구 금액, F열 비고입니다.
-- 중복 동기화 방지를 위해 DB 상태 + 시트 request id 조회를 함께 사용
-
-### 4.2 회칙 챗봇
-
-- 관리자가 PDF, DOCX, XLSX 회칙 파일 업로드 후 인덱싱
-- 페이지/청크 단위로 텍스트 저장합니다. DOCX는 문서 전체를 1페이지처럼, XLSX는 시트별로 페이지처럼 저장합니다.
-- PDF 인덱싱은 선택 가능한 텍스트 레이어를 `pypdf`로 먼저 추출하고, 텍스트가 없는 페이지는 Tesseract OCR로 보완합니다. DOCX는 `python-docx`, XLSX는 `openpyxl`로 텍스트를 추출합니다.
-- 답변은 quote/page citation이 검증될 때만 노출합니다. 공백/줄바꿈 차이는 정규화해 검증합니다.
-- 검증 실패, 근거 부족, 관련 없는 질문, LLM 설정/연결 문제는 서로 다른 메시지로 안내합니다.
-
-### 4.3 관리자 운영
-
-- Django admin에서 주요 모델 관리 가능
-- 별도 관리 설정 화면에서 구성원 계정과 카테고리 추가/비활성화
-- 헬스체크: `/health/`
-
-## 5. Docker 파일
-
-핵심 배포 파일은 저장소에 포함되어 있습니다.
-
-- [Dockerfile](/c:/Users/dong/Desktop/projects/ttpaa/Dockerfile)
-- [docker-compose.yml](/c:/Users/dong/Desktop/projects/ttpaa/docker-compose.yml)
-- [compose.production.yml](/c:/Users/dong/Desktop/projects/ttpaa/compose.production.yml)
-- [entrypoint.sh](/c:/Users/dong/Desktop/projects/ttpaa/scripts/entrypoint.sh)
-- [Caddyfile](/c:/Users/dong/Desktop/projects/ttpaa/compose/caddy/Caddyfile)
-- [.env.example](/c:/Users/dong/Desktop/projects/ttpaa/.env.example)
-
-## 6. VPS 배포 가이드
-
-권장 기본 배포는 Ubuntu VPS + Docker Compose + Caddy 입니다.
-
-### 6.1 서버 준비
-
-```bash
-sudo apt update
-sudo apt install -y docker.io docker-compose-plugin git
-sudo usermod -aG docker $USER
+```text
+firebase/public/firebase-config.js
 ```
 
-로그아웃 후 다시 로그인합니다.
+Shape:
 
-### 6.2 배포 절차
+```js
+window.TTPAA_FIREBASE_CONFIG = {
+  apiKey: "...",
+  authDomain: "ttpaa-c64a6.firebaseapp.com",
+  projectId: "ttpaa-c64a6",
+  storageBucket: "ttpaa-c64a6.firebasestorage.app",
+  messagingSenderId: "...",
+  appId: "..."
+};
 
-```bash
-git clone <your-repo-url> ttpaa
-cd ttpaa
-cp .env.example .env
+window.TTPAA_CHATBOT_CONFIG = {
+  endpointUrl: "https://script.google.com/macros/s/.../exec"
+};
+
+window.TTPAA_EXPENSE_SYNC_CONFIG = {
+  endpointUrl: "https://script.google.com/macros/s/.../exec"
+};
 ```
 
-`.env` 예시:
+`TTPAA_FIREBASE_CONFIG.apiKey` is a Firebase web API key, not a server secret. `GEMINI_API_KEY` must never be placed here.
 
-```env
-DJANGO_SECRET_KEY=very-strong-secret
-DJANGO_DEBUG=False
-DJANGO_ALLOWED_HOSTS=portal.example.com
-DJANGO_CSRF_TRUSTED_ORIGINS=https://portal.example.com
-APP_BASE_URL=https://portal.example.com
-APP_DOMAIN=portal.example.com
-POSTGRES_DB=ttpaa
-POSTGRES_USER=ttpaa
-POSTGRES_PASSWORD=strong-db-password
-DATABASE_URL=postgres://ttpaa:strong-db-password@db:5432/ttpaa
-DEFAULT_FROM_EMAIL=no-reply@portal.example.com
-EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
-EMAIL_HOST=smtp.example.com
-EMAIL_PORT=587
-EMAIL_HOST_USER=no-reply@portal.example.com
-EMAIL_HOST_PASSWORD=change-me
-EMAIL_USE_TLS=True
-ADMIN_EMAILS=finance@example.com
-LLM_PROVIDER=gemini
-GEMINI_API_KEY=...
+## Apps Script Gemini Endpoint
+
+The Apps Script source is:
+
+```text
+integrations/apps-script-policy-chatbot.gs
+```
+
+Create a Google Apps Script project:
+
+```text
+https://script.google.com/
+```
+
+Replace `Code.gs` with the contents of `integrations/apps-script-policy-chatbot.gs`.
+
+Add Script properties:
+
+```text
+FIREBASE_WEB_API_KEY=<firebase web api key from firebase-config.js>
+GEMINI_API_KEY=<Gemini API key>
 GEMINI_CHAT_MODEL=gemini-2.5-flash
+GEMINI_FALLBACK_MODEL=gemini-2.5-flash-lite
 GEMINI_THINKING_BUDGET=0
-OPENAI_API_KEY=
-GOOGLE_SERVICE_ACCOUNT_FILE=/app/secrets/google-service-account.json
-GOOGLE_DRIVE_FOLDER_ID=...
-GOOGLE_SHEET_ID=...
-GOOGLE_SHEET_NAME=Expenses
 ```
 
-서비스 계정 키 파일을 쓰는 경우 로컬 또는 서버의 `secrets/google-service-account.json`에 키 파일을 두면 Docker Compose가 컨테이너의 `/app/secrets/google-service-account.json`로 읽기 전용 마운트합니다. 이 파일은 커밋하지 않습니다.
+Deploy as:
 
-서비스 시작:
-
-```bash
-docker compose -f compose.production.yml up -d --build
-docker compose -f compose.production.yml exec web python manage.py createsuperuser
-docker compose -f compose.production.yml exec web python manage.py seed_demo
+```text
+Deploy > New deployment > Web app
+Execute as: Me
+Who has access: Anyone
 ```
 
-### 6.3 DNS / HTTPS
+The endpoint still verifies Firebase Auth id tokens before calling Gemini. `Anyone` is used so the Firebase-hosted browser app can reach the Web App URL.
 
-- DNS A 레코드를 VPS 공인 IP로 연결합니다.
-- `APP_DOMAIN` 을 실제 도메인으로 설정합니다.
-- Caddy가 80/443 포트에서 자동으로 HTTPS 인증서를 발급합니다.
+After deployment, put the `/exec` URL into:
 
-추천 도메인 예:
-
-- `portal.ttpaa.kr`
-- `app.ttpaa.kr`
-- `ttpaa.club`
-
-### 6.4 업데이트
-
-```bash
-git pull
-docker compose -f compose.production.yml up -d --build
-docker compose -f compose.production.yml exec web python manage.py migrate
+```js
+window.TTPAA_CHATBOT_CONFIG = {
+  endpointUrl: "https://script.google.com/macros/s/.../exec"
+};
 ```
 
-### 6.5 재시작 / 로그
+Then redeploy Hosting.
 
-```bash
-docker compose -f compose.production.yml restart
-docker compose -f compose.production.yml logs -f web
-docker compose -f compose.production.yml logs -f caddy
+## Apps Script Expense Sync Endpoint
+
+The expense sync endpoint restores the old paid-expense automation without putting Google Drive or Sheets credentials in browser JavaScript.
+
+Current flow:
+
+```text
+User
+  -> submits expense with receipt images
+Browser
+  -> uploads images to Firebase Storage
+  -> stores receipt metadata in expenseRequests/{requestId}
+Admin
+  -> marks request as paid
+Browser
+  -> calls Apps Script with Firebase idToken + expense data
+Apps Script
+  -> verifies Firebase login token
+  -> verifies the user profile role is admin
+  -> downloads receipt images
+  -> saves files to Drive
+  -> appends one row to Google Sheets
+Browser
+  -> deletes the original Firebase Storage images after Drive/Sheets sync succeeds
+  -> marks receiptFiles as storageDeleted in Firestore
 ```
 
-### 6.6 백업
+Create a separate Google Apps Script project for expense sync and replace `Code.gs` with:
 
-DB 백업:
-
-```bash
-docker compose -f compose.production.yml exec db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup.sql
+```text
+integrations/apps-script-expense-sync.gs
 ```
 
-미디어 백업:
+Add Script properties:
 
-```bash
-docker run --rm -v ttpaa_media_data:/source -v $(pwd):/backup alpine tar czf /backup/media-backup.tar.gz -C /source .
+```text
+FIREBASE_WEB_API_KEY=<firebase web api key from firebase-config.js>
+FIREBASE_PROJECT_ID=ttpaa-c64a6
+EXPENSE_SPREADSHEET_ID=<target Google spreadsheet id>
+EXPENSE_SHEET_NAME=buffer
+EXPENSE_DRIVE_FOLDER_ID=<target Drive folder id>
 ```
 
-복원 예시:
+Deploy as:
 
-```bash
-cat backup.sql | docker compose -f compose.production.yml exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_DB"
+```text
+Deploy > New deployment > Web app
+Execute as: Me
+Who has access: Anyone
 ```
 
-## 7. PaaS 배포
+The Web App is publicly reachable, but the script rejects calls without a valid Firebase id token and an admin `users/{uid}.role`.
 
-Render / Railway / Fly.io 같은 Dockerfile 지원 플랫폼에도 배포할 수 있습니다.
+After deployment, put the `/exec` URL into:
 
-- 웹 서비스는 이 저장소의 [Dockerfile](/c:/Users/dong/Desktop/projects/ttpaa/Dockerfile) 사용
-- PostgreSQL은 플랫폼 관리형 DB 사용
-- 환경변수는 `.env.example` 기준으로 등록
-- 정적/미디어는 persistent disk 또는 외부 스토리지 사용 권장
-- 도메인은 플랫폼 custom domain 기능으로 연결
-
-필수 체크:
-
-- `DJANGO_DEBUG=False`
-- `DJANGO_ALLOWED_HOSTS`
-- `DJANGO_CSRF_TRUSTED_ORIGINS`
-- `DATABASE_URL`
-- `APP_BASE_URL`
-
-## 8. 운영 runbook
-
-- 사용자 생성: Django admin 또는 관리 설정 화면
-- 카테고리 변경: 관리 설정 화면 또는 Django admin
-- 회칙 업로드/교체: `회칙 관리` 화면
-- 재인덱싱: `회칙 관리` 화면의 `재인덱싱`
-- 지출 검토: `관리 검토` 화면
-- 지급 완료 처리: 상세 화면에서 `지급 완료 처리`
-- Google 동기화 재시도: 상세 화면에서 `Google 동기화 재시도`
-- 비밀키 교체: `.env` 변경 후 컨테이너 재시작
-- 로그 확인: `docker compose logs -f web`
-
-운영 상세 문서는 [operations.md](/c:/Users/dong/Desktop/projects/ttpaa/docs/operations.md) 를 참고하세요.
-
-## 9. 테스트
-
-작성된 테스트 범위:
-
-- 지출 요청 제출
-- 관리자 승인
-- 관리자 반려
-- 지급 완료 처리
-- Google 동기화 성공
-- 중복 동기화 방지
-- 회칙 업로드 및 인덱싱
-- 챗봇 지원 답변
-- 챗봇 거절 답변
-- 권한 제한
-
-실행:
-
-```bash
-docker compose exec web python manage.py test
+```js
+window.TTPAA_EXPENSE_SYNC_CONFIG = {
+  endpointUrl: "https://script.google.com/macros/s/.../exec"
+};
 ```
 
-## 10. 한계와 설계 선택
+Then redeploy Hosting.
 
-- `pgvector` 는 Docker 단순성을 위해 도입하지 않았습니다.
-- 회칙 챗봇은 작은 문서에서는 페이지 전체 텍스트를 LLM 컨텍스트로 전달하고, 문서가 너무 큰 경우 PostgreSQL 저장 청크 + Python lexical scoring으로 fallback합니다.
-- 회칙 PDF 인덱싱은 텍스트 레이어를 우선 사용하고, 텍스트가 없거나 너무 짧은 페이지는 Tesseract OCR로 텍스트 추출을 시도합니다. DOCX/XLSX는 파일 내 텍스트를 직접 추출합니다. OCR 언어, 해상도, OCR fallback 기준은 `CONSTITUTION_OCR_LANG`, `CONSTITUTION_OCR_DPI`, `CONSTITUTION_OCR_MIN_TEXT_CHARS`로 조정할 수 있습니다.
-- HEIC 파일은 업로드/저장은 허용하지만 브라우저 미리보기는 환경에 따라 제한될 수 있습니다.
-- 백그라운드 큐(Celery/Redis)는 운영 단순성을 위해 제외했습니다.
+Receipt image files are stored in Drive with this format, then the Firebase Storage originals are deleted:
+
+```text
+YYYYMMDD_순번_아이디_사진순서.ext
+```
+
+Example:
+
+```text
+20260417_003_kimttp_01.jpg
+```
+
+The default sheet row columns are:
+
+```text
+지출일, 카테고리, 금액, 신청자명, Drive 링크, 메모, requestId, 지급일, 지급 처리자, 동기화 시각
+```
+
+## Importing Policy Data
+
+The easiest import path uses the Firebase Web SDK and an existing admin user.
+
+Install dependencies:
+
+```powershell
+npm install
+```
+
+Set admin credentials for an account whose Firestore profile has `role = "admin"`:
+
+```powershell
+$env:TTPAA_ADMIN_EMAIL="admin@example.com"
+$env:TTPAA_ADMIN_PASSWORD="your-password"
+```
+
+Import policy data:
+
+```powershell
+npm run import:policy:client
+```
+
+This command:
+
+- reads `data/policies/ttpaa-policy.json`
+- deletes existing `policyPages` documents
+- writes `policy-001` through `policy-078`
+- stores `version`, `order`, `section`, `article`, `clause`, `subclause`, and `paragraph`
+
+Append without deleting existing data:
+
+```powershell
+node scripts/import-policy-client.mjs --replace false
+```
+
+There is also an Admin SDK import script:
+
+```powershell
+npm run import:policy
+```
+
+That path requires Application Default Credentials or a service account with Firestore permissions on project `ttpaa-c64a6`.
+
+## Firestore Security
+
+Rules live in:
+
+```text
+firebase/firestore.rules
+```
+
+Current rules:
+
+- signed-in users can read policy data
+- signed-in users can create their own expense requests
+- users can read their own expense requests
+- admins can read and update all expense requests
+- admins can write expense categories and policy data
+- users can create their own chat query logs
+
+Deploy after changing rules:
+
+```powershell
+firebase deploy --only firestore --project ttpaa-c64a6
+```
+
+## Development Notes
+
+Check JavaScript syntax:
+
+```powershell
+node --check firebase/public/app.js
+node --check scripts/import-policy-client.mjs
+```
+
+Validate policy JSON:
+
+```powershell
+node -e "const data=require('./data/policies/ttpaa-policy.json'); console.log(data.length, data[0].section)"
+```
+
+Deploy static app:
+
+```powershell
+firebase deploy --only hosting:ttpaa --project ttpaa-c64a6
+```
+
+If the browser keeps an old version of `app.js`, hard refresh or unregister the service worker:
+
+```text
+Chrome DevTools > Application > Service Workers > Unregister
+```
+
+## Operational Runbook
+
+### Add User
+
+Users can create accounts through the web app. Their profile is created as `member`.
+
+To promote:
+
+```text
+Firestore > users > {uid} > role = "admin"
+```
+
+### Update Policy
+
+Edit:
+
+```text
+data/policies/ttpaa-policy.json
+```
+
+Then run:
+
+```powershell
+$env:TTPAA_ADMIN_EMAIL="admin@example.com"
+$env:TTPAA_ADMIN_PASSWORD="your-password"
+npm run import:policy:client
+```
+
+### Change Chatbot Model
+
+In Apps Script Script properties:
+
+```text
+GEMINI_CHAT_MODEL=gemini-2.5-flash
+GEMINI_FALLBACK_MODEL=gemini-2.5-flash-lite
+GEMINI_THINKING_BUDGET=0
+```
+
+Redeploy the Apps Script Web App after code changes. Script property changes usually apply without a Firebase Hosting deploy.
+
+### Change Firebase Frontend Config
+
+Edit:
+
+```text
+firebase/public/firebase-config.js
+```
+
+Then deploy Hosting:
+
+```powershell
+firebase deploy --only hosting:ttpaa --project ttpaa-c64a6
+```
+
+## Current Limitations
+
+- Receipt files are uploaded to Firebase Storage first, copied to Drive when marked as paid, then deleted from Firebase Storage after a successful Drive/Sheets sync.
+- Drive/Sheets automatic synchronization requires the separate Apps Script expense sync endpoint.
+- The policy chatbot sends the full policy JSON to the Apps Script endpoint per question.
+- Firestore policy import requires an admin Firebase Auth account or a service account with Firestore permissions.
+- Account self-signup is currently possible. For stricter access, change default user role to `pending` and allow only admins to promote users to `member`.
+
+## References
+
+- Firebase Hosting: https://firebase.google.com/docs/hosting
+- Firebase Authentication: https://firebase.google.com/docs/auth
+- Cloud Firestore: https://firebase.google.com/docs/firestore
+- Firestore security rules: https://firebase.google.com/docs/firestore/security/get-started
+- Gemini API: https://ai.google.dev/api

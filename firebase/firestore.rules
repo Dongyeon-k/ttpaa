@@ -1,0 +1,98 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function userDoc(uid) {
+      return get(/databases/$(database)/documents/users/$(uid));
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userDoc(request.auth.uid).data.role == 'admin';
+    }
+
+    function hasOnlyProfileFields() {
+      return request.resource.data.keys().hasOnly([
+        'uid',
+        'email',
+        'displayName',
+        'role',
+        'createdAt',
+        'updatedAt'
+      ]);
+    }
+
+    function ownMemberProfile(uid) {
+      return isSelf(uid)
+        && hasOnlyProfileFields()
+        && request.resource.data.uid == uid
+        && request.resource.data.role == 'member';
+    }
+
+    match /users/{uid} {
+      allow read: if isSelf(uid) || isAdmin();
+      allow create: if ownMemberProfile(uid) || isAdmin();
+      allow update: if isAdmin() || (
+        isSelf(uid)
+        && hasOnlyProfileFields()
+        && request.resource.data.uid == uid
+        && request.resource.data.role == resource.data.role
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /expenseCategories/{categoryId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /expenseRequests/{requestId} {
+      allow create: if signedIn()
+        && request.resource.data.requesterUid == request.auth.uid
+        && request.resource.data.status == 'submitted';
+      allow read: if isAdmin() || resource.data.requesterUid == request.auth.uid;
+      allow update: if isAdmin() || (
+        resource.data.requesterUid == request.auth.uid
+        && request.resource.data.requesterUid == resource.data.requesterUid
+        && request.resource.data.status == resource.data.status
+      );
+      allow delete: if isAdmin();
+
+      match /statusHistory/{historyId} {
+        allow create: if isAdmin()
+          || (
+            signedIn()
+            && get(/databases/$(database)/documents/expenseRequests/$(requestId)).data.requesterUid == request.auth.uid
+          );
+        allow read: if isAdmin()
+          || get(/databases/$(database)/documents/expenseRequests/$(requestId)).data.requesterUid == request.auth.uid;
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    match /policyPages/{pageId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /chatQueryLogs/{logId} {
+      allow create: if signedIn() && request.resource.data.userUid == request.auth.uid;
+      allow read: if isAdmin() || resource.data.userUid == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "scripts": {
+    "import:policy": "node scripts/import-policy.mjs --project ttpaa-c64a6 --file data/policies/ttpaa-policy.json --version \"TTPAA 회칙\"",
+    "import:policy:client": "node scripts/import-policy-client.mjs --file data/policies/ttpaa-policy.json --version \"TTPAA 회칙\""
+  },
+  "dependencies": {
+    "firebase": "^12.12.0",
+    "firebase-admin": "^13.8.0"
+  }
+}
